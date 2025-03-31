@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, send_from_directory
+from flask import Flask, request, render_template, send_from_directory, jsonify
 import os
 from PIL import Image
 
@@ -49,7 +49,31 @@ def serve_processed_image():
 def serve_border_image():
     return send_from_directory(app.config["TEMPLATE_FOLDER"], 'eink_border.png')
 
-def process_image(image_path):
+@app.route("/image/preview")
+def serve_preview_image():
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], "preview.png")
+    if not os.path.exists(filepath):
+        return "No preview image yet", 404
+    return send_from_directory(app.config["UPLOAD_FOLDER"], "preview.png")
+
+@app.route('/process-image', methods=['POST'])
+def process_uploaded_image():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    preview_file_name = "preview.png"
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], preview_file_name)
+    file.save(filepath)
+
+    processed_image_path = process_image(filepath, output_path=preview_file_name)
+    return jsonify({"processedImageUrl": f"/image/preview"}), 200
+
+
+def process_image(image_path, output_path="processed.png"):
     """Process the image to match E-Ink display format (296x128, black-white-red)"""
     img = Image.open(image_path).convert("RGBA")  # Open as RGBA to handle transparency
     img = img.resize((296, 128))  # Resize to match display resolution
@@ -70,7 +94,7 @@ def process_image(image_path):
     new_img = Image.new("RGB", (296, 128))
     new_img.putdata(new_pixels)
 
-    processed_path = os.path.join(app.config["UPLOAD_FOLDER"], "processed.png")
+    processed_path = os.path.join(app.config["UPLOAD_FOLDER"], output_path)
     new_img.save(processed_path)
     return processed_path
 
