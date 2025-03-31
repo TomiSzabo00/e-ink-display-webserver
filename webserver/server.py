@@ -1,0 +1,78 @@
+from flask import Flask, request, render_template, send_from_directory
+import os
+from PIL import Image
+
+UPLOAD_FOLDER = "uploads"
+TEMPLATE_FOLDER = "templates"
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp"}
+
+app = Flask(__name__)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["TEMPLATE_FOLDER"] = TEMPLATE_FOLDER
+
+# Define the 3-color palette (black, white, red)
+PALETTE = [(0, 0, 0), (255, 255, 255), (255, 0, 0)]  # Black, White, Red
+
+# Ensure the upload folder exists
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route("/", methods=["GET", "POST"])
+def upload_file():
+    if request.method == "POST":
+        if "file" not in request.files:
+            return "No file part", 400
+        file = request.files["file"]
+        if file.filename == "":
+            return "No selected file", 400
+        if file and allowed_file(file.filename):
+            filepath = os.path.join(app.config["UPLOAD_FOLDER"], "latest.png")
+            file.save(filepath)
+            process_image(filepath)
+            return "Upload successful!", 200
+    return render_template("index.html")
+
+@app.route("/image/latest")
+def serve_latest_image():
+    return send_from_directory(app.config["UPLOAD_FOLDER"], "latest.png")
+
+@app.route("/image/processed")
+def serve_processed_image():
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], "processed.png")
+    if not os.path.exists(filepath):
+        return "No processed image yet", 404
+    return send_from_directory(app.config["UPLOAD_FOLDER"], "processed.png")
+
+@app.route("/image/border")
+def serve_border_image():
+    return send_from_directory(app.config["TEMPLATE_FOLDER"], 'eink_border.png')
+
+def process_image(image_path):
+    """Process the image to match E-Ink display format (296x128, black-white-red)"""
+    img = Image.open(image_path).convert("RGBA")  # Open as RGBA to handle transparency
+    img = img.resize((296, 128))  # Resize to match display resolution
+
+    def closest_color(pixel):
+        """Find the closest match in the 3-color palette"""
+        r, g, b, a = pixel  # Extract RGBA values
+        if a < 128:  # If pixel is transparent (alpha < 128), treat it as white
+            return (255, 255, 255)
+
+        # Find the closest color in the palette
+        return min(PALETTE, key=lambda color: sum((c1 - c2) ** 2 for c1, c2 in zip((r, g, b), color)))
+
+    pixels = list(img.getdata())
+    new_pixels = [closest_color(pixel) for pixel in pixels]
+
+    # Create new image with the processed colors
+    new_img = Image.new("RGB", (296, 128))
+    new_img.putdata(new_pixels)
+
+    processed_path = os.path.join(app.config["UPLOAD_FOLDER"], "processed.png")
+    new_img.save(processed_path)
+    return processed_path
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5001)

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Image</title>
+    <style>
+        .border-container {
+            position: relative;
+            width: 342px;
+            height: 132px;
+            background-image: url('/image/border'); /* Your border image */
+            background-size: cover;
+        }
+
+        .content-image {
+            position: absolute;
+            top: 2px; /* 3px from top */
+            left: 23px; /* 24px from left */
+            width: 296px; /* Width of the original image */
+            height: 128px; /* Height of the original image */
+        }
+    </style>
+</head>
+<body>
+    <h2>Upload Image for ESP32</h2>
+    <form action="/" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept="image/png, image/jpeg, image/bmp" required onchange="previewImage(event)">
+        <button type="submit">Upload</button>
+    </form>
+    <h3 id="preview-title" hidden="true">Image preview:</h3>
+    <div class="border-container" id="image-container" hidden="true">
+        <!-- The uploaded image will appear here dynamically -->
+    </div>
+    <h3 id="current-image-title">Current image:</h3>
+    <div class="border-container" id="current-image-container">
+        <img src="/image/processed" alt="Current Image" class="content-image">
+    </div>
+
+    <script>
+        function previewImage(event) {
+            const imageContainer = document.getElementById('image-container');
+            const previewTitle = document.getElementById('preview-title');
+
+            const file = event.target.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                const img = document.createElement('img');
+                img.src = e.target.result;
+                img.classList.add('content-image');
+                imageContainer.innerHTML = ''; // Clear the container before adding new image
+                imageContainer.appendChild(img);
+
+                imageContainer.hidden = false; // Show the container
+                previewTitle.hidden = false; // Show the title
+            }
+
+            reader.readAsDataURL(file);
+        }
+    </script>
+</body>
+</html>
