@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, send_from_directory, jsonify
+from flask import Flask, request, render_template, send_from_directory, jsonify, Response
 import os
 from PIL import Image
 
@@ -72,6 +72,25 @@ def process_uploaded_image():
     processed_image_path = process_image(filepath, output_path=preview_file_name)
     return jsonify({"processedImageUrl": f"/image/preview"}), 200
 
+@app.route("/image/buffers")
+def serve_buffers():
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], "processed.png")
+    if not os.path.exists(filepath):
+        return "No processed image yet", 404
+
+    black_buffer, red_buffer = process_image_to_buffers(filepath)
+
+    # Pack both buffers into a single response (black first, then red)
+    response_data = bytes(black_buffer) + bytes(red_buffer)
+
+    return Response(
+        response_data,
+        mimetype="application/octet-stream",
+        headers={
+            "Content-Disposition": "attachment;filename=buffers.bin",
+            "X-Buffer-Size": str(len(black_buffer)),  # Helps ESP32 split the response
+        },
+    )
 
 def process_image(image_path, output_path="processed.png"):
     """Process the image to match E-Ink display format (296x128, black-white-red)"""
@@ -97,6 +116,41 @@ def process_image(image_path, output_path="processed.png"):
     processed_path = os.path.join(app.config["UPLOAD_FOLDER"], output_path)
     new_img.save(processed_path)
     return processed_path
+
+def process_image_to_buffers(image_path):
+    """Process image and return black/red buffers (1-bit per pixel)"""
+    img = Image.open(image_path).convert("RGBA")
+    img = img.resize((296, 128))  # Resize to match display resolution
+
+    width, height = img.size
+    buffer_size = (width * height + 7) // 8  # Calculate bytes needed (1 bit per pixel)
+
+    # Initialize buffers (all zeros)
+    black_buffer = bytearray(buffer_size)
+    red_buffer = bytearray(buffer_size)
+
+    for y in range(height):
+        for x in range(width):
+            pixel = img.getpixel((x, y))
+            r, g, b, a = pixel
+            if a < 128:  # Transparent → white (no action, buffers are pre-zeroed)
+                continue
+
+            # Find closest color
+            closest = min(PALETTE, key=lambda color: sum((c1 - c2) ** 2 for c1, c2 in zip((r, g, b), color)))
+
+            # Calculate buffer position
+            idx = y * width + x
+            byte_pos = idx // 8
+            bit_pos = 7 - (idx % 8)  # MSB first
+
+            if closest == (0, 0, 0):  # Black
+                black_buffer[byte_pos] |= (1 << bit_pos)
+            elif closest == (255, 0, 0):  # Red
+                red_buffer[byte_pos] |= (1 << bit_pos)
+            # White: do nothing
+
+    return black_buffer, red_buffer
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
