@@ -1,132 +1,175 @@
-#define ENABLE_GxEPD2_GFX 0
-
-#include <GxEPD2_BW.h>
-#include <GxEPD2_3C.h>
-#include <Fonts/FreeMonoBold9pt7b.h>
-
 #include <WiFi.h>
-#include <HTTPClient.h>
-const char* ssid = "Tamás iPhone-ja";
-const char* password = "VizualTabla";
-const char* serverUrl = "http://80.98.23.213:5002/image/buffers";
+#include <WebServer.h>
+#include <DNSServer.h>
+#include <EEPROM.h>
 
-#define IMAGE_WIDTH 296
-#define IMAGE_HEIGHT 128
+const byte DNS_PORT = 53;
+const char* AP_SSID = "ESP32_Setup";
+const char* AP_PASSWORD = "configure123";
 
-GxEPD2_3C<GxEPD2_290_C90c, GxEPD2_290_C90c::HEIGHT> display(GxEPD2_290_C90c(/*CS=5*/ 5, /*DC=*/ 17, /*RES=*/ 16, /*BUSY=*/ 4));
+WebServer server(80);
+DNSServer dnsServer;
+#define MAX_SSID_COUNT 50
+String availableSSIDs[MAX_SSID_COUNT];
+int availableSSIDCount = 0;
 
-void setup()
-{
-  display.init(115200, true, 50, false);
+#define EEPROM_SIZE 96
+#define WIFI_SSID_ADDR 0
+#define WIFI_PASS_ADDR 32
+#define MAX_STR_LEN 32
 
+void setup() {
   Serial.begin(9600);
-  WiFi.begin(ssid, password);
-  
-  unsigned long startMillis = millis();
-  while( !WiFi.isConnected() ) {
-      delay(1000);
-      Serial.println("Connecting to WiFi...");
-      
-      // Timeout after 10 seconds
-      if (millis() - startMillis > 10000) {
-          Serial.println("Failed to connect to WiFi");
-          return;
-      }
+  EEPROM.begin(EEPROM_SIZE);
+
+  String ssid = readEEPROM(WIFI_SSID_ADDR);
+  String pass = readEEPROM(WIFI_PASS_ADDR);
+
+  Serial.printf("Stored SSID: '%s'\n", ssid.c_str());
+
+  if (!ssid.isEmpty()) {
+    if (connectWiFi(ssid.c_str(), pass.c_str())) {
+      Serial.println("Connected to stored WiFi!");
+      startMainOperation();
+      return;
+    }
   }
 
-  delay(2000);
-
-  Serial.println("WiFi connected");
-  Serial.println("IP address: " + WiFi.localIP().toString());
-  downloadImage();
-
-  display.hibernate();
+  // If no stored credentials or connection failed, scan for available SSIDs
+  scanSSIDs();
+  startAPMode();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  dnsServer.processNextRequest();
+  server.handleClient();
 }
 
-void downloadImage() {
-  HTTPClient http;
-  http.begin(serverUrl);
-  http.setTimeout(10000);
-  http.setConnectTimeout(10000);
-  int httpCode = http.GET();
+void scanSSIDs() {
+  Serial.println("Scanning for available networks...");
+  // Set to station mode and disconnect from any previous network
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);  // Allow time for the radio to settle
 
-  if (httpCode == HTTP_CODE_OK) {
-    const int bufferSize = IMAGE_WIDTH * IMAGE_HEIGHT / 8; // 296 * 128 / 8 = 4736 bytes
-
-    // Allocate buffers on the HEAP (not stack)
-    uint8_t* blackBuffer = (uint8_t*) malloc(bufferSize);
-    uint8_t* redBuffer = (uint8_t*) malloc(bufferSize);
-    memset(blackBuffer, 0, bufferSize);
-    memset(redBuffer, 0, bufferSize);
-
-    if (!blackBuffer || !redBuffer) {
-      Serial.println("Error: Not enough memory for buffers!");
-      http.end();
-      return;
-    }
-
-    WiFiClient* stream = http.getStreamPtr();
-
-    // Read black buffer (first 4736 bytes)
-    int bytesRead = stream->readBytes(blackBuffer, bufferSize);
-    if (bytesRead != bufferSize) {
-      Serial.println("Warning: Not enough bytes read for black buffer.");
-      free(blackBuffer);
-      free(redBuffer);
-      http.end();
-      return;
-    }
-    Serial.println("Black buffer read successfully");
-
-    // Read red buffer (next 4736 bytes)
-    bytesRead = stream->readBytes(redBuffer, bufferSize);
-    if (bytesRead != bufferSize) {
-      Serial.println("Warning: Not enough bytes read for red buffer.");
-      free(blackBuffer);
-      free(redBuffer);
-      http.end();
-      return;
-    }
-    Serial.println("Red buffer read successfully");
-
-    drawImage(blackBuffer, redBuffer);
-  } else {
-    Serial.println("HTTP Error: " + String(httpCode));
+  int n = WiFi.scanNetworks();
+  if (n < 0) {
+    Serial.printf("Scan failed with error code: %d\n", n);
+    availableSSIDCount = 0;
+    return;
   }
-  http.end();
+  Serial.printf("Scan complete. Found %d networks.\n", n);
+  
+  // Limit the count to our maximum array size
+  availableSSIDCount = (n < MAX_SSID_COUNT) ? n : MAX_SSID_COUNT;
+  for (int i = 0; i < availableSSIDCount; i++) {
+    availableSSIDs[i] = WiFi.SSID(i);
+  }
 }
 
-// Example drawImage() implementation for GxEPD2
-void drawImage(uint8_t* blackBuffer, uint8_t* redBuffer) {
-  display.setRotation(3);
-  display.firstPage();
+// WiFi connection attempt
+bool connectWiFi(const char* ssid, const char* pass) {
+  WiFi.begin(ssid, pass);
+  Serial.print("Connecting to WiFi");
+  int retries = 0;
+  while (WiFi.status() != WL_CONNECTED && retries++ < 20) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  return WiFi.status() == WL_CONNECTED;
+}
 
-  do {
-    for (int y = 0; y < 128; y++) {
-      for (int x = 0; x < 296; x++) {
-        int idx = y * 296 + x;
-        int bytePos = idx / 8;
-        int bitPos = 7 - (idx % 8);  // MSB first
+// Start AP + DNS redirection (Captive Portal)
+void startAPMode() {
+  Serial.println("Starting AP + Captive Portal...");
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(AP_SSID, AP_PASSWORD);
+  delay(100); // Wait for AP setup
+  
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
 
-        bool isBlack = (blackBuffer[bytePos] >> bitPos) & 1;
-        bool isRed = (redBuffer[bytePos] >> bitPos) & 1;
+  Serial.printf("Connect to '%s' (password: '%s')\n", AP_SSID, AP_PASSWORD);
+  Serial.print("AP IP address: ");
+  Serial.println(WiFi.softAPIP());
 
-        if (isBlack) {
-          display.drawPixel(x, y, GxEPD_BLACK);
-        } else if (isRed) {
-          display.drawPixel(x, y, GxEPD_RED);
-        } else {
-          display.drawPixel(x, y, GxEPD_WHITE);
-        }
-      }
+  server.on("/", handleRoot);
+  server.on("/save", HTTP_POST, handleSave);
+
+  server.onNotFound(handleRoot);
+
+  server.begin();
+  Serial.println("HTTP server started.");
+}
+
+// HTML form
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
+  html += "<title>ESP32 WiFi Setup</title></head><body>";
+  html += "<h2>Select WiFi Network:</h2>";
+  
+  if (availableSSIDCount == 0) {
+    html += "<p>No networks found. Please refresh the page.</p>";
+  } else {
+    html += "<form method='POST' action='/save'>";
+    html += "<select name='ssid'>";
+    for (int i = 0; i < availableSSIDCount; i++) {
+      html += "<option value='" + availableSSIDs[i] + "'>" + availableSSIDs[i] + "</option>";
     }
-  } while (display.nextPage());
+    html += "</select><br><br>";
+    html += "Password: <input type='password' name='pass'><br><br>";
+    html += "<input type='submit' value='Save & Connect'>";
+    html += "</form>";
+  }
+  html += "</body></html>";
+  
+  server.send(200, "text/html", html);
+}
 
-  free(blackBuffer);
-  free(redBuffer);
-  Serial.println("Image drawn successfully");
+// Save submitted WiFi settings
+void handleSave() {
+  if (!server.hasArg("ssid") || !server.hasArg("pass")) {
+    server.send(400, "text/plain", "SSID and Password required.");
+    return;
+  }
+
+  String ssid = server.arg("ssid");
+  String pass = server.arg("pass");
+
+  server.send(200, "text/html", "Attempting to connect to '" + ssid + "'. ESP32 will restart.");
+
+  delay(1000);
+
+  writeEEPROM(WIFI_SSID_ADDR, ssid);
+  writeEEPROM(WIFI_PASS_ADDR, pass);
+
+  delay(500);
+  ESP.restart();
+}
+
+// EEPROM helper functions
+void writeEEPROM(int addr, String data) {
+  for (int i = 0; i < MAX_STR_LEN; ++i) {
+    if (i < data.length()) {
+      EEPROM.write(addr + i, data[i]);
+    } else {
+      EEPROM.write(addr + i, '\0');
+    }
+  }
+  EEPROM.commit();
+}
+
+String readEEPROM(int addr) {
+  char data[MAX_STR_LEN];
+  for (int i = 0; i < MAX_STR_LEN; ++i) {
+    data[i] = EEPROM.read(addr + i);
+  }
+  data[MAX_STR_LEN - 1] = '\0';
+  return String(data);
+}
+
+// Main operation once connected
+void startMainOperation() {
+  Serial.println("Connected! Implement your main operation here.");
+  // Continue your operation (NTP sync, deep sleep, etc.)
 }
