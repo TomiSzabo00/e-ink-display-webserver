@@ -10,6 +10,8 @@
 #include <GxEPD2_3C.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
 
+#include <time.h>
+
 // Access Point (AP) settings
 const byte DNS_PORT = 53;
 const char* AP_SSID = "KijelzoWifi";
@@ -35,7 +37,10 @@ GxEPD2_3C<GxEPD2_290_C90c, GxEPD2_290_C90c::HEIGHT> display(GxEPD2_290_C90c(/*CS
 // Server URL for image data
 const char* serverUrl = "http://80.98.23.213:5002/image/buffers";
 
+// deep sleep
+#define uS_TO_S_FACTOR 1000000ULL
 
+// QR code and settings
 #define QR_CODE_SIZE 70
 // 'wifi', 70x70px
 const unsigned char epd_bitmap_wifi [] PROGMEM = {
@@ -82,9 +87,16 @@ const unsigned char epd_bitmap_wifi [] PROGMEM = {
 };
 
 void setup() {
-  display.init(115200, true, 50, false);
+  display.init(9600, true, 20, false);
   Serial.begin(9600);
   EEPROM.begin(EEPROM_SIZE);
+
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  Serial.printf("Wakeup reason: %d\n", wakeup_reason);
+
+  // Set the time zone for Budapest (CET/CEST)
+  setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+  tzset();
 
   String ssid = readEEPROM(WIFI_SSID_ADDR);
   String pass = readEEPROM(WIFI_PASS_ADDR);
@@ -119,6 +131,40 @@ void setup() {
 void loop() {
   dnsServer.processNextRequest();
   server.handleClient();
+}
+
+void deepSleep() {
+  configTime(3600, 3600, "pool.ntp.org");
+
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    esp_deep_sleep_start();
+    return;
+  }
+
+  Serial.printf("Current time: %02d:%02d:%02d\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+
+  int secondsToMidnight = ((5 - timeinfo.tm_hour) * 3600) 
+                          + ((29 - timeinfo.tm_min) * 60)
+                          + (59 - timeinfo.tm_sec);
+
+  if (secondsToMidnight < 0) {
+    // Turn negative seconds into positive by adding 24 hours
+    secondsToMidnight += (24 * 3600);
+  }
+
+  Serial.printf("Going to deep sleep for %d seconds (~%.2f hours)\n", secondsToMidnight, secondsToMidnight / 3600.0);
+
+  esp_sleep_enable_timer_wakeup((uint64_t)secondsToMidnight * uS_TO_S_FACTOR);
+
+  Serial.println("Entering deep sleep now.");
+  WiFi.disconnect();
+  EEPROM.end();
+  display.end();
+  display.powerOff();
+  delay(1000); // Allow time for the display to power off
+  esp_deep_sleep_start();
 }
 
 void scanSSIDs() {
@@ -248,6 +294,7 @@ String readEEPROM(int addr) {
 // Main operation once connected
 void startMainOperation() {
   downloadImage();
+  deepSleep();
 }
 
 void downloadImage() {
@@ -411,6 +458,7 @@ void drawError() {
   } while (display.nextPage());
 
   display.hibernate();
+  deepSleep();
 }
 
 void drawNoInternet() {
