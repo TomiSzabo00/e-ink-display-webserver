@@ -12,6 +12,9 @@
 
 #include <time.h>
 
+#include <Wire.h>
+#include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h>
+
 // Access Point (AP) settings
 const byte DNS_PORT = 53;
 const char* AP_SSID = "KijelzoWifi";
@@ -28,11 +31,17 @@ int availableSSIDCount = 0;
 #define WIFI_PASS_ADDR 32
 #define MAX_STR_LEN 32
 
-
 // Display settings
 #define IMAGE_WIDTH 296
 #define IMAGE_HEIGHT 128
 GxEPD2_3C<GxEPD2_290_C90c, GxEPD2_290_C90c::HEIGHT> display(GxEPD2_290_C90c(/*CS=5*/ 5, /*DC=*/ 17, /*RES=*/ 16, /*BUSY=*/ 4));
+
+// Battery settings
+SFE_MAX1704X lipo; // Defaults to the MAX17043
+double voltage = 0;
+double soc = 0;
+unsigned long previousBatteryCheckMillis = 0;
+#define BATTERY_CHECK_INTERVAL 2000
 
 // Server URL for image data
 const char* serverUrl = "http://80.98.23.213:5002/image/buffers";
@@ -90,6 +99,11 @@ void setup() {
   display.init(9600, true, 20, false);
   Serial.begin(9600);
   EEPROM.begin(EEPROM_SIZE);
+  Wire.begin();
+  lipo.begin();
+  lipo.quickStart();
+
+  checkForLowBattery();
 
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   Serial.printf("Wakeup reason: %d\n", wakeup_reason);
@@ -131,6 +145,38 @@ void setup() {
 void loop() {
   dnsServer.processNextRequest();
   server.handleClient();
+}
+
+void measureBattery() {
+  delay(100);
+  voltage = lipo.getVoltage();
+  soc = lipo.getSOC();
+
+  Serial.print("Voltage: ");
+  Serial.print(voltage);
+  Serial.println(" V");
+
+  Serial.print("Percentage: ");
+  Serial.print(soc);
+  Serial.println(" %");
+}
+
+void checkForLowBattery() {
+  double avgVoltage = 0;
+  double avgSoc = 0;
+  int numberOfSamples = 5;
+
+  for(int i = 0; i < numberOfSamples; i++) {
+    measureBattery();
+    lipo.reset();
+    lipo.quickStart();
+    avgVoltage += voltage;
+    avgSoc += soc;
+    delay(200);
+  }
+
+  voltage = avgVoltage / numberOfSamples;
+  soc = avgSoc / numberOfSamples;
 }
 
 void deepSleep() {
@@ -491,6 +537,30 @@ void drawNoInternet() {
     display.drawBitmap(rectWidth - QR_CODE_SIZE + 5, rectHeight - QR_CODE_SIZE + 5, epd_bitmap_wifi, QR_CODE_SIZE, QR_CODE_SIZE, GxEPD_BLACK);
   } while (display.nextPage());
 
+  display.hibernate();
+}
+
+void drawLowBattery() {
+  display.setRotation(3);
+  display.firstPage();
+  do {
+    // draw a little battery icon on the top right corner
+    int rectWidth = 30;
+    int rectHeight = 18;
+    int rectX = IMAGE_WIDTH - rectWidth;
+    int rectY = 0;
+    display.fillRect(rectX, rectY, rectWidth, rectHeight, GxEPD_BLACK);
+    display.fillRect(rectX + 1, rectY + 1, rectWidth - 2, rectHeight - 2, GxEPD_WHITE);
+
+    int batteryWidth = 20;
+    int batteryHeight = 10;
+    int batteryX = rectX + (rectWidth - batteryWidth) / 2 - 1;
+    int batteryY = rectY + (rectHeight - batteryHeight) / 2;
+    display.fillRect(batteryX, batteryY, batteryWidth, batteryHeight, GxEPD_BLACK);
+    display.fillRect(batteryX + 1, batteryY + 1, 3, batteryHeight - 2, GxEPD_RED);
+    display.fillRect(batteryX + batteryWidth, batteryY + batteryHeight / 2 - 2.5, 2, 6, GxEPD_BLACK);
+
+  } while (display.nextPage());
   display.hibernate();
 }
 
