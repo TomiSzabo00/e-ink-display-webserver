@@ -106,14 +106,13 @@ void setup() {
   lipo.begin();
   lipo.quickStart();
 
-  checkForLowBattery();
-
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  Serial.printf("Wakeup reason: %d\n", wakeup_reason);
-
   // Set the time zone for Budapest (CET/CEST)
   setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
   tzset();
+  configTime(3600, 3600, "pool.ntp.org");
+
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  Serial.printf("Wakeup reason: %d\n", wakeup_reason);
 
   String ssid = readEEPROM(WIFI_SSID_ADDR);
   String pass = readEEPROM(WIFI_PASS_ADDR);
@@ -131,18 +130,21 @@ void setup() {
             drawNoInternet();
             scanSSIDs();
             startAPMode();
+            checkForLowBattery();
             drawLowBattery();
             return;
         }
     }
 
     Serial.println("Connected to WiFi");
+    checkForLowBattery();
     startMainOperation();
   } else {
     Serial.println("No saved WiFi credentials found. Starting AP mode...");
     drawNoInternet();
     scanSSIDs();
     startAPMode();
+    checkForLowBattery();
     drawLowBattery();
   }
 }
@@ -188,8 +190,6 @@ void checkForLowBattery() {
 }
 
 void deepSleep() {
-  configTime(3600, 3600, "pool.ntp.org");
-
   struct tm timeinfo;
   if(!getLocalTime(&timeinfo)){
     Serial.println("Failed to obtain time");
@@ -414,18 +414,17 @@ void downloadImage() {
 }
 
 void sendBatteryStatus() {
-  HTTPClient http;
-  String url = "http://80.98.23.213:5002/status";
-  http.begin(url);
-  http.addHeader("Content-Type", "application/json");
-
   // Get current time and format as "YYYY.MM.DD."
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
     Serial.println("Failed to obtain time for battery status");
-    http.end();
     return;
   }
+
+    HTTPClient http;
+  String url = "http://80.98.23.213:5002/status";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
   char dateStr[16];
   snprintf(dateStr, sizeof(dateStr), "%04d.%02d.%02d.", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday);
 
