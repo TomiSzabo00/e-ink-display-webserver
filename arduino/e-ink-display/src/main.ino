@@ -42,6 +42,9 @@ double voltage = 0;
 double soc = 0;
 unsigned long previousBatteryCheckMillis = 0;
 #define BATTERY_CHECK_INTERVAL 2000
+#define BATTERY_VOLTAGE_THRESHOLD 3.4
+#define BATTERY_SOC_THRESHOLD 20
+bool shouldDrawLowBattery = false;
 
 // Server URL for image data
 const char* serverUrl = "http://80.98.23.213:5002/image/buffers";
@@ -128,6 +131,7 @@ void setup() {
             drawNoInternet();
             scanSSIDs();
             startAPMode();
+            drawLowBattery();
             return;
         }
     }
@@ -139,6 +143,7 @@ void setup() {
     drawNoInternet();
     scanSSIDs();
     startAPMode();
+    drawLowBattery();
   }
 }
 
@@ -177,6 +182,8 @@ void checkForLowBattery() {
 
   voltage = avgVoltage / numberOfSamples;
   soc = avgSoc / numberOfSamples;
+
+  shouldDrawLowBattery = (voltage < BATTERY_VOLTAGE_THRESHOLD) || (soc < BATTERY_SOC_THRESHOLD);
 }
 
 void deepSleep() {
@@ -340,6 +347,7 @@ String readEEPROM(int addr) {
 // Main operation once connected
 void startMainOperation() {
   downloadImage();
+  drawLowBattery();
   deepSleep();
 }
 
@@ -504,7 +512,6 @@ void drawError() {
   } while (display.nextPage());
 
   display.hibernate();
-  deepSleep();
 }
 
 void drawNoInternet() {
@@ -541,6 +548,8 @@ void drawNoInternet() {
 }
 
 void drawLowBattery() {
+  if (!shouldDrawLowBattery) return;
+
   display.setRotation(3);
   display.firstPage();
   do {
