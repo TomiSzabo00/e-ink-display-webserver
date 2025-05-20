@@ -1,10 +1,12 @@
 from flask import Flask, request, render_template, send_from_directory, jsonify, Response
 import os
 from PIL import Image
+import json
 
 UPLOAD_FOLDER = "uploads"
 TEMPLATE_FOLDER = "templates"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp"}
+STATUS_FILE = "status.jsonl"  # JSON Lines format
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
@@ -151,6 +153,57 @@ def process_image_to_buffers(image_path):
             # White: do nothing
 
     return black_buffer, red_buffer
+
+@app.route('/status', methods=['POST'])
+def receive_status():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No JSON payload"}), 400
+
+    timestamp = data.get("timestamp")
+    battery = data.get("battery")
+
+    if timestamp is None or battery is None:
+        return jsonify({"error": "Missing 'timestamp' or 'battery'"}), 400
+
+    voltage = battery.get("voltage")
+    soc = battery.get("SoC")
+
+    if voltage is None or soc is None:
+        return jsonify({"error": "Missing 'voltage' or 'SoC' in battery object"}), 400
+
+    status_data = {
+        "timestamp": timestamp,
+        "battery": {
+            "voltage": voltage,
+            "SoC": soc
+        }
+    }
+
+    # Append the new status as a line in the file
+    with open(STATUS_FILE, "a") as f:
+        f.write(json.dumps(status_data) + "\n")
+
+    return jsonify({"message": "Status received", "status": status_data}), 200
+
+@app.route("/shouldUpdate", methods=["GET"])
+def should_update():
+    """
+    Example: /shouldUpdate?lastAccess=1716220000
+    Returns: true or false (as JSON boolean)
+    """
+    latest_path = os.path.join(app.config["UPLOAD_FOLDER"], "latest.png")
+    if not os.path.exists(latest_path):
+        return jsonify(False)
+
+    last_modified = int(os.path.getmtime(latest_path))
+    last_access = request.args.get("lastAccess", type=int)
+
+    if last_access is None:
+        # If not provided, always suggest update
+        return jsonify(True)
+    else:
+        return jsonify(last_modified > last_access)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
