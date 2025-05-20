@@ -184,6 +184,7 @@ void checkForLowBattery() {
   soc = avgSoc / numberOfSamples;
 
   shouldDrawLowBattery = (voltage < BATTERY_VOLTAGE_THRESHOLD) || (soc < BATTERY_SOC_THRESHOLD);
+  sendBatteryStatus();
 }
 
 void deepSleep() {
@@ -352,6 +353,11 @@ void startMainOperation() {
 }
 
 void downloadImage() {
+  if (!shouldUpdateImage()) {
+    Serial.println("No update needed, skipping image download.");
+    return;
+  }
+
   HTTPClient http;
   http.begin(serverUrl);
   http.setTimeout(10000);
@@ -405,6 +411,62 @@ void downloadImage() {
     drawError();
   }
   http.end();
+}
+
+void sendBatteryStatus() {
+  HTTPClient http;
+  String url = "http://80.98.23.213:5002/status";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+
+  // Get current time and format as "YYYY.MM.DD."
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to obtain time for battery status");
+    http.end();
+    return;
+  }
+  char dateStr[16];
+  snprintf(dateStr, sizeof(dateStr), "%04d.%02d.%02d.", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday);
+
+  String payload = "{";
+  payload += "\"timestamp\":\"" + String(dateStr) + "\",";
+  payload += "\"battery\":{";
+  payload += "\"voltage\":" + String(voltage, 3) + ",";
+  payload += "\"SoC\":" + String(soc, 1);
+  payload += "}}";
+
+  int httpCode = http.POST(payload);
+  if (httpCode > 0) {
+    Serial.printf("Battery status sent, response code: %d\n", httpCode);
+  } else {
+    Serial.println("Failed to send battery status");
+  }
+  http.end();
+}
+
+bool shouldUpdateImage() {
+  HTTPClient http;
+  String url = "http://80.98.23.213:5002/shouldUpdate";
+
+  // Get last access time (now)
+  time_t now;
+  time(&now);
+  url += "?lastAccess=" + String((unsigned long)now);
+
+  http.begin(url);
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    String response = http.getString();
+    http.end();
+    response.trim();
+    // Expecting "true" or "false"
+    return response == "true";
+  } else {
+    http.end();
+    Serial.println("Failed to check shouldUpdate, assuming update needed");
+    return true; // If error, assume update is needed
+  }
 }
 
 void drawImage(uint8_t* blackBuffer, uint8_t* redBuffer) {
@@ -553,21 +615,31 @@ void drawLowBattery() {
   display.setRotation(3);
   display.firstPage();
   do {
-    // draw a little battery icon on the top right corner
+    // datas
     int rectWidth = 30;
     int rectHeight = 18;
     int rectX = IMAGE_WIDTH - rectWidth;
     int rectY = 0;
-    display.fillRect(rectX, rectY, rectWidth, rectHeight, GxEPD_BLACK);
-    display.fillRect(rectX + 1, rectY + 1, rectWidth - 2, rectHeight - 2, GxEPD_WHITE);
-
     int batteryWidth = 20;
     int batteryHeight = 10;
     int batteryX = rectX + (rectWidth - batteryWidth) / 2 - 1;
     int batteryY = rectY + (rectHeight - batteryHeight) / 2;
+    int redWidth = 4;
+    int petrusionWidth = 2;
+    int petrusionHeight = 6;
+    int outlineWidth = 1;
+
+    // draw bounding box
+    display.fillRect(rectX, rectY, rectWidth, rectHeight, GxEPD_BLACK);
+    display.fillRect(rectX + outlineWidth, rectY + outlineWidth, rectWidth - (outlineWidth * 2), rectHeight - (outlineWidth * 2), GxEPD_WHITE);
+    // battery outline
     display.fillRect(batteryX, batteryY, batteryWidth, batteryHeight, GxEPD_BLACK);
-    display.fillRect(batteryX + 1, batteryY + 1, 3, batteryHeight - 2, GxEPD_RED);
-    display.fillRect(batteryX + batteryWidth, batteryY + batteryHeight / 2 - 2.5, 2, 6, GxEPD_BLACK);
+    display.fillRect(batteryX + batteryWidth, batteryY + (batteryHeight - petrusionHeight) / 2, petrusionWidth, petrusionHeight, GxEPD_BLACK);
+    // white fill
+    display.fillRect(batteryX + outlineWidth + redWidth, batteryY + outlineWidth, batteryWidth - redWidth - (outlineWidth * 2), batteryHeight - (outlineWidth * 2), GxEPD_WHITE);
+    display.fillRect(batteryX + batteryWidth, batteryY + (batteryHeight - petrusionHeight) / 2 + outlineWidth, petrusionWidth - outlineWidth, petrusionHeight - (outlineWidth * 2), GxEPD_WHITE);
+    // red remaining part
+    display.fillRect(batteryX + outlineWidth, batteryY + outlineWidth, redWidth, batteryHeight - (outlineWidth * 2), GxEPD_RED);
 
   } while (display.nextPage());
   display.hibernate();
