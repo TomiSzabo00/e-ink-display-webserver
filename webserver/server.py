@@ -205,5 +205,9 @@ def should_update():
     else:
         return jsonify(last_modified > last_access)
 
+@app.route('/status')
+def status():
+    return Response(open(STATUS_FILE).read(), mimetype="text/plain")
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
