@@ -25,11 +25,13 @@ DNSServer dnsServer;
 String availableSSIDs[MAX_SSID_COUNT];
 int availableSSIDCount = 0;
 
-// EEPROM settings (for storing WiFi credentials)
+// EEPROM settings
 #define EEPROM_SIZE 96
 #define WIFI_SSID_ADDR 0
 #define WIFI_PASS_ADDR 32
 #define MAX_STR_LEN 32
+#define LAST_ACCESS_ADDR 64
+#define LAST_ACCESS_SIZE 4
 
 // Display settings
 #define IMAGE_WIDTH 296
@@ -345,6 +347,21 @@ String readEEPROM(int addr) {
   return String(data);
 }
 
+void writeLastAccessToEEPROM(unsigned long lastAccess) {
+  for (int i = 0; i < LAST_ACCESS_SIZE; ++i) {
+    EEPROM.write(LAST_ACCESS_ADDR + i, (lastAccess >> (8 * i)) & 0xFF);
+  }
+  EEPROM.commit();
+}
+
+unsigned long readLastAccessFromEEPROM() {
+  unsigned long value = 0;
+  for (int i = 0; i < LAST_ACCESS_SIZE; ++i) {
+    value |= (EEPROM.read(LAST_ACCESS_ADDR + i) << (8 * i));
+  }
+  return value;
+}
+
 // Main operation once connected
 void startMainOperation() {
   downloadImage();
@@ -406,6 +423,10 @@ void downloadImage() {
     }
     Serial.println("Red buffer read successfully");
     drawImage(blackBuffer, redBuffer);
+
+    time_t now;
+    time(&now);
+    writeLastAccessToEEPROM((unsigned long)now);
   } else {
     Serial.println("HTTP Error: " + String(httpCode));
     drawError();
@@ -448,10 +469,9 @@ bool shouldUpdateImage() {
   HTTPClient http;
   String url = "http://80.98.23.213:5002/shouldUpdate";
 
-  // Get last access time (now)
-  time_t now;
-  time(&now);
-  url += "?lastAccess=" + String((unsigned long)now);
+  // Get last access time
+  unsigned long lastAccess = readLastAccessFromEEPROM();
+  url += "?lastAccess=" + String(lastAccess);
 
   http.begin(url);
   int httpCode = http.GET();
