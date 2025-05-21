@@ -1,5 +1,5 @@
 name: "E-Ink Dashboard"
-version: "1.0"
+version: "1.1"
 slug: eink_dashboard
 description: "Frontend integration for ESP32 E-Ink display"
 arch:
