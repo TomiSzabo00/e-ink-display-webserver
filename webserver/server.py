@@ -207,7 +207,14 @@ def should_update():
 
 @app.route('/status')
 def status():
-    return Response(open(STATUS_FILE).read(), mimetype="text/plain")
+    with open(STATUS_FILE, "r") as f:
+        # Read last 10 lines
+        lines = f.readlines()#[-10:]
+        # Convert each JSONL line into a Python dict
+        data = [json.loads(line.strip()) for line in lines]
+
+    # Return a JSON object that wraps the list in "battery_data"
+    return jsonify({"battery_data": data})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
