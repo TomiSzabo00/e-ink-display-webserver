@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-RUN pip install jinja2
+RUN apt-get update && apt-get install -y jq && pip install jinja2
 
 WORKDIR /app
 COPY run.sh /app/run.sh
