@@ -1,0 +1,25 @@
+title: E-Ink Display
+path: eink
+icon: mdi:image
+cards:
+  - type: picture
+    image: http://{{ host }}:{{ port }}/image/processed
+    title: Current Image
+
+  - type: entities
+    title: Battery Status
+    entities:
+      - sensor.eink_battery_voltage
+      - sensor.eink_battery_soc
+
+  - type: button
+    name: Refresh Now
+    tap_action:
+      action: call-service
+      service: rest_command.refresh_eink
+
+  - type: button
+    name: Upload Image
+    tap_action:
+      action: call-service
+      service: rest_command.upload_eink_image

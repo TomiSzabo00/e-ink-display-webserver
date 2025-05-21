@@ -1,0 +1,19 @@
+name: "E-Ink Dashboard"
+version: "1.0"
+slug: eink_dashboard
+description: "Frontend integration for ESP32 E-Ink display"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: once
+boot: manual
+hassio_api: true
+host_network: true
+init: false
+options:
+  backend_host: "192.168.0.99"
+  backend_port: 5002
+schema:
+  backend_host: str
+  backend_port: int
