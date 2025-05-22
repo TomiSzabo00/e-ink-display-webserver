@@ -347,21 +347,6 @@ String readEEPROM(int addr) {
   return String(data);
 }
 
-void writeLastAccessToEEPROM(unsigned long lastAccess) {
-  for (int i = 0; i < LAST_ACCESS_SIZE; ++i) {
-    EEPROM.write(LAST_ACCESS_ADDR + i, (lastAccess >> (8 * i)) & 0xFF);
-  }
-  EEPROM.commit();
-}
-
-unsigned long readLastAccessFromEEPROM() {
-  unsigned long value = 0;
-  for (int i = 0; i < LAST_ACCESS_SIZE; ++i) {
-    value |= (EEPROM.read(LAST_ACCESS_ADDR + i) << (8 * i));
-  }
-  return value;
-}
-
 // Main operation once connected
 void startMainOperation() {
   downloadImage();
@@ -370,11 +355,6 @@ void startMainOperation() {
 }
 
 void downloadImage() {
-  if (!shouldUpdateImage()) {
-    Serial.println("No update needed, skipping image download.");
-    return;
-  }
-
   HTTPClient http;
   http.begin(serverUrl);
   http.setTimeout(10000);
@@ -423,10 +403,6 @@ void downloadImage() {
     }
     Serial.println("Red buffer read successfully");
     drawImage(blackBuffer, redBuffer);
-
-    time_t now;
-    time(&now);
-    writeLastAccessToEEPROM((unsigned long)now);
   } else {
     Serial.println("HTTP Error: " + String(httpCode));
     drawError();
@@ -463,29 +439,6 @@ void sendBatteryStatus() {
     Serial.println("Failed to send battery status");
   }
   http.end();
-}
-
-bool shouldUpdateImage() {
-  HTTPClient http;
-  String url = "http://80.98.23.213:5002/shouldUpdate";
-
-  // Get last access time
-  unsigned long lastAccess = readLastAccessFromEEPROM();
-  url += "?lastAccess=" + String(lastAccess);
-
-  http.begin(url);
-  int httpCode = http.GET();
-  if (httpCode == HTTP_CODE_OK) {
-    String response = http.getString();
-    http.end();
-    response.trim();
-    // Expecting "true" or "false"
-    return response == "true";
-  } else {
-    http.end();
-    Serial.println("Failed to check shouldUpdate, assuming update needed");
-    return true; // If error, assume update is needed
-  }
 }
 
 void drawImage(uint8_t* blackBuffer, uint8_t* redBuffer) {
