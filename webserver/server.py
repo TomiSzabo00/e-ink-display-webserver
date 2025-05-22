@@ -2,6 +2,7 @@ from flask import Flask, request, render_template, send_from_directory, jsonify,
 import os
 from PIL import Image
 import json
+from datetime import datetime
 
 UPLOAD_FOLDER = "uploads"
 TEMPLATE_FOLDER = "templates"
@@ -186,6 +187,33 @@ def receive_status():
 
     return jsonify({"message": "Status received", "status": status_data}), 200
 
+@app.route('/status/delete/<string:timestamp>', methods=['DELETE'])
+def delete_status_by_timestamp(timestamp):
+    if not os.path.exists(STATUS_FILE):
+        return jsonify({"error": "Log file not found"}), 404
+
+    updated_lines = []
+    deleted = False
+
+    with open(STATUS_FILE, "r") as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+                if entry.get("timestamp") == timestamp:
+                    deleted = True
+                    continue  # Skip matching entry
+                updated_lines.append(line)
+            except json.JSONDecodeError:
+                updated_lines.append(line)  # Keep malformed lines
+
+    if not deleted:
+        return jsonify({"message": "No matching entry found"}), 404
+
+    with open(STATUS_FILE, "w") as f:
+        f.writelines(updated_lines)
+
+    return jsonify({"message": f"Entry with timestamp '{timestamp}' deleted"}), 200
+
 @app.route("/shouldUpdate", methods=["GET"])
 def should_update():
     """
@@ -208,12 +236,20 @@ def should_update():
 @app.route('/status')
 def status():
     with open(STATUS_FILE, "r") as f:
-        # Read last 10 lines
-        lines = f.readlines()#[-10:]
-        # Convert each JSONL line into a Python dict
-        data = [json.loads(line.strip()) for line in lines]
+        lines = f.readlines()
 
-    # Return a JSON object that wraps the list in "battery_data"
+    try:
+        data = [
+            json.loads(line.strip())
+            for line in lines
+            if line.strip()
+        ]
+
+        data.sort(key=lambda entry: datetime.strptime(entry["timestamp"], "%Y-%m-%d %H:%M:%S"))
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to parse or sort data: {str(e)}"}), 500
+
     return jsonify({"battery_data": data})
 
 if __name__ == "__main__":
