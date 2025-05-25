@@ -245,7 +245,7 @@ def status():
             if line.strip()
         ]
 
-        data.sort(key=lambda entry: datetime.strptime(entry["timestamp"], "%Y-%m-%d %H:%M:%S"))
+        data.sort(key=lambda entry: datetime.strptime(entry["timestamp"], "%Y-%m-%d %H:%M:%S"), reverse=True)
 
     except Exception as e:
         return jsonify({"error": f"Failed to parse or sort data: {str(e)}"}), 500
