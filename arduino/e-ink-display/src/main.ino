@@ -422,8 +422,18 @@ void sendBatteryStatus() {
   String url = "http://80.98.23.213:5002/status";
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
-  char dateStr[16];
-  snprintf(dateStr, sizeof(dateStr), "%04d.%02d.%02d.", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday);
+  char dateStr[24];
+  snprintf(
+      dateStr,
+      sizeof(dateStr),
+      "%04d-%02d-%02d %02d:%02d:%02d",
+      timeinfo.tm_year + 1900,
+      timeinfo.tm_mon + 1,
+      timeinfo.tm_mday,
+      timeinfo.tm_hour,
+      timeinfo.tm_min,
+      timeinfo.tm_sec
+  );
 
   String payload = "{";
   payload += "\"timestamp\":\"" + String(dateStr) + "\",";
